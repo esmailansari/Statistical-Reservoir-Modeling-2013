@@ -1,0 +1,452 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Short Sectioned Assignment
+% LaTeX Template
+% Version 1.0 (5/5/12)
+%
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% Original author:
+% Frits Wenneker (http://www.howtotex.com)
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/)
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%  PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[paper=a4, fontsize=12pt]{scrartcl} % A4 paper and 11pt font size
+
+\usepackage[T1]{fontenc} % Use 8-bit encoding that has 256 glyphs
+\usepackage{fourier} % Use the Adobe Utopia font for the document - comment this line to return to the LaTeX default
+\usepackage[english]{babel} % English language/hyphenation
+\usepackage{amsmath,amsfonts,amsthm} % Math packages
+
+\usepackage{lipsum} % Used for inserting dummy 'Lorem ipsum' text into the template
+\usepackage{pdfpages}
+\usepackage{sectsty} % Allows customizing section commands
+\allsectionsfont{ \normalfont\scshape} % Make all sections centered, the default font and small caps
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{fancyhdr} % Custom headers and footers
+\pagestyle{fancyplain} % Makes all pages in the document conform to the custom headers and footers
+\fancyhead{} % No page header - if you want one, create it in the same way as the footers below
+\fancyfoot[L]{} % Empty left footer
+\fancyfoot[C]{} % Empty center footer
+\fancyfoot[R]{\thepage} % Page numbering for right footer
+\renewcommand{\headrulewidth}{0pt} % Remove header underlines
+\renewcommand{\footrulewidth}{0pt} % Remove footer underlines
+\setlength{\headheight}{13.6pt} % Customize the height of the header
+
+\numberwithin{equation}{section} % Number equations within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+\numberwithin{figure}{section} % Number figures within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+\numberwithin{table}{section} % Number tables within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+
+\setlength\parindent{1pt} % Removes all indentation from paragraphs - comment this line for an assignment with lots of text
+
+%----------------------------------------------------------------------------------------
+%	TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\newcommand{\horrule}[1]{\rule{\linewidth}{#1}} % Create horizontal rule command with 1 argument of height
+
+\title{	
+\normalfont \normalsize 
+\textsc{Statistical Reservoir Modeling \\
+(PETE 7285)} \\ [25pt] % Your university, school and/or department name(s)
+\horrule{0.5pt} \\[0.4cm] % Thin top horizontal rule
+\huge  Exam 1 \\ % The assignment title
+\horrule{2pt} \\[0.5cm] % Thick bottom horizontal rule
+}
+
+\author{Esmail Ansari} % Your name
+
+\date{\small\today} % Today's date or a custom date
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+
+\maketitle % Print the title
+
+%----------------------------------------------------------------------------------------
+%	PROBLEM 1
+%----------------------------------------------------------------------------------------
+
+\section{Integrating models for facies prediction}
+
+%-----------------------------------------
+%----------------------------------------------------
+%-------------
+\subsection{Part A}
+The course codes were trimmed so that they only output scaled kapur data (function \texttt{scaleKapur}). Then, the kapur facies are counted using \texttt{table} function and probability (proportion) of each facies is computed. 
+
+<<tidy=FALSE,eval=FALSE>>=
+#cleaning variables and closing plots
+rm(list=ls())
+if (!is.null(dev.list())) dev.off()
+
+#loading packages
+require(boot)
+require(nnet)
+require(RColorBrewer)
+require(ggplot2)
+require(lattice)
+line.colors <- brewer.pal(N.facies,"Dark2")
+
+#Counting facies using 'table' function
+facies     = kapur["facies"]
+tab.facies = table(facies)
+N.facies   = length(tab.facies)
+tot.obs    = sum(tab.facies)
+p.facies   = tab.facies/tot.obs
+@
+
+For fitting a beta distribution to the facies, the total counts are used for estimating alpha and beta. \texttt{dbeta} function is then used for calculating the probability of facies proportions. The results are then tabulated to be used by \textit{lattice} package. 
+
+<<tidy=FALSE,eval=FALSE>>=
+for (i in 1:N.facies){
+  #evaluating the parameters of beta function and facies pdf
+  x     =  seq(0,1,0.001)
+  alpha = tab.facies+1
+  beta  =  tot.obs-tab.facies+1
+  p.df  = dbeta(x,alpha[i],beta[i])
+  
+  #tidy up for lattice package 
+  current.size = length(x)
+  sum.size.pri = current.size+sum.size.pri
+  all.prior[(sum.size.pri-current.size):(sum.size.pri-1),1] = x
+  all.prior[(sum.size.pri-current.size):(sum.size.pri-1),2] = 
+    p.df/sum(p.df)
+  all.prior[(sum.size.pri-current.size):(sum.size.pri-1),3] =
+   rep(paste("facies ",i),length(x))    
+}
+#plotting priors using lattice package 
+line.colors = brewer.pal(N.facies,"Dark2")
+myStrip     = function(which.panel, factor.levels, ...) {
+  panel.rect(0, 0, 1, 1,col = line.colors[which.panel],border = 1)
+  panel.text(x = 0.5, y = 0.5,font = 2,lab = factor.levels[which.panel])
+}
+print(xyplot(Probability ~ Proportion|Facies.type,
+               data = all.prior[1:sum.size.pri-1,],
+               type = "l",lwd = 3,strip = myStrip))
+@
+
+
+%-------------
+\subsection{Part B}
+Function \texttt{prob.facies} was prepared for bootstraping using \texttt{boot} function. This function fits the multinomial regression to the facies and outputs the probability of probability of each facies. 
+<<tidy=FALSE,eval=FALSE>>=
+#Defining the probability function to be bootstrapped
+prob.facies     <-  function(formula, data, indices){
+  selected.data   =  data[indices,]
+  kapur.glm       =  multinom(formula,data=selected.data)
+  pred.glm        =  fitted(kapur.glm)
+  pred.glm        =  sortPredByLevels(pred.glm)
+  most.likely.glm =  apply(pred.glm,1,which.max)
+  tab.pred.facies =  table(most.likely.glm)
+  tot.obs         =   sum(tab.pred.facies)
+  all.fac.name    =  names(table(data$facies))
+  N.facies        =   length(all.fac.name)
+  idxToFac        =   all.fac.name
+  names(idxToFac) =   as.character(1:N.facies)
+  sel.fac.name    =   names(tab.pred.facies)
+  names(tab.pred.facies) = idxToFac[sel.fac.name]
+  no.occur.facies =   setdiff(all.fac.name,sel.fac.name)
+  prob            =   rep(NA,N.facies)
+  names(prob)     =  all.fac.name
+  if (any(as.integer(no.occur.facies))) {
+    prob[no.occur.facies] = 0
+  }
+  prob[sel.fac.name]  =  as.vector(tab.pred.facies)/tot.obs
+return(prob)
+}
+@
+
+Note that when we are using bootstraping for categorical data, we face two important challenges. First, some facies type may not be sampled and second some facies type may not be predicted. For both of these situations we should put the probability of such facies to zero. Here, facies 2 and 7 occur relatively few times and sometimes they may not be sampled or predictred. Below lines (which are in \texttt{prob.facies} function) are added for detecting unsampled facies and enforcing their probabilities as zero when bootstapping. Below chunck demonstrates the idea of naming  existing facies according to the indeices that come out of \texttt{which.max} function.
+
+<<tidy=FALSE,eval=FALSE>>=
+all.fac.name    =  names(table(data$facies))
+N.facies        =   length(all.fac.name)
+idxToFac        =   all.fac.name
+names(idxToFac) =   as.character(1:N.facies)
+sel.fac.name    =   names(tab.pred.facies)
+names(tab.pred.facies) = idxToFac[sel.fac.name]
+no.occur.facies =   setdiff(all.fac.name,sel.fac.name)
+prob            =   rep(NA,N.facies)
+names(prob)     =  all.fac.name
+if (any(as.integer(no.occur.facies))) {
+  prob[no.occur.facies] = 0 
+@
+
+And finally function \texttt{prob.facies} is prepared to be passed to  function \texttt{boot} to be bootstrapped 300 times. 
+
+<<tidy=FALSE,eval=FALSE>>=
+# Bootstrapping using boot function
+form        = facies ~ caliper + ind.deep + gamma + r.deep + density
+
+boot.result = boot(formula=form, statistic=prob.facies,
+                   data=scaleKapur(kapur),R=N.Boot)
+@
+
+%-------------
+\subsection{Part C}
+Posteriors are calculated by multiplying the priors and likelihoods. In below code \texttt{y} represents the likelihood and \texttt{p.df} represents the prior counts for the facies. 
+<<eval=FALSE>>=
+#Finding and plotting facies posteriors
+  posterior = p.df*y/sum(p.df*y)
+@
+and then we plot the posterior of each facies using 
+\textit{ggplot2} package. 
+<<tidy=FALSE,eval=FALSE>>=
+  df       = data.frame(x,prior,likelihood,posterior)
+  
+  g[[i]]   = ggplot( df, aes(x)) +                   
+                    geom_line(aes(y=prior,colour="prior")) +  
+                    geom_line(aes(y=likelihood,colour="likelihood")) +  
+                    geom_line(aes(y=posterior,colour="posterior") )
+  
+  g[[i]]  = g[[i]] + xlab(paste("proportion of facies ", 
+                     names(tab.facies[i]))) + ylab("Probability")+
+                     scale_colour_manual("",values=c("darkgreen","blue","red"))
+
+
+require(gridExtra)
+for (i in seq(1,8,2)){
+  sidebysideplot = grid.arrange(g[[i]], g[[i+1]], nrow=2)
+  print(sidebysideplot)
+}
+@
+For facies 1 and 2, the likelihood improves our belief about the proportion of these facies and our model strengthens the priors. The likelihood weakens our confidence (prior) on probabilities of facies 5 and 7. Probabilities of facies 9 and 10 are not affected using bayesian analysis. This may be because their proportions are already high and likelihood also approves the priors to be the best representation of these facies. For facies 3, the likelihood hugely changes our understanding of it's probability. It inidcates that most probable proportion of facies 3 is 0.055 and our prior opinion of 0.07 may not be accurate based on new evidence (bootstrapped multinomial model). 
+
+
+\begin{figure}[htbp]
+\begin{center}
+\includegraphics[width=\linewidth]{LDAfit.pdf}
+\caption{we just used linear discrimentant analysis instead of logistic regression to plot prediction vs. depth. Posteriors are not used in constructing this figure.}
+\label{simPlot}
+\end{center}
+\end{figure}
+
+\includepdf[pages={1,2}]{prior-likelihood.pdf}
+
+\includepdf[pages={1,2,3,4},width=1.2\linewidth]{posterior.pdf}
+
+
+%--------------
+%%%PROBLEM 2
+%---------------------
+\section{Markov chain as a stochastic graph}
+%-------------
+Various assumptions used for solving this problem are summarized below. 
+\begin{enumerate}
+\item For the work over, first arrived well, will be served first.
+\item If multiple well damage at the same time, the oldest well(the well that has started the chain sooner) will be worked over first. 
+\item The reservoir engineer has estimated a value of N.true for each well. As soon as this value becomes zero (or less), the well is considered depleted and should be abandoned. 
+\item For constructing violin plot, only drilling risks are taken into consideration and reserovir engineer's prediction (N.true) will remain the same for all runs. If desired, this assumption can be easily eleminated.   
+\end{enumerate}
+
+\texttt{SetState.R} contains functions that make small changes to state transitions. 
+<<tidy=FALSE,eval=FALSE>>=
+#Defining states, costs and state transition functions
+rm(list=ls())
+source(file.path('/Users/eansar2/Desktop/Geostatistics/TakeHome',
+                 'SetState.R'))
+costs <- list(Queue=0,Drill=-25,FinishedDrill=0,Complete=-25,Produce=-0.1,
+              Shut_in=0,WaitForRig=0,WorkOver=-25,Abandon=-10)
+states <-   c("Queue","Drill","FinishedDrill","Complete","Produce",
+              "Shut_in","WaitForRig","WorkOver","Abandon")
+
+@
+
+%---algorithm
+ \begin{algorithm}
+ \caption{Markov Chain}
+ \label{alg1}
+ \begin{algorithmic}[1]
+ \STATE Initialize variables
+ \WHILE{not all wells abandoned}
+ \FOR{each wells}
+ \IF{drilling job finished}
+ \STATE Move the well out of drilling state
+ \ENDIF
+ \IF{drilling is empty and this well is in queue}
+ \STATE Drill this well
+ \ENDIF
+ \IF{any well is damaged}
+ \STATE Work over the earlier damaged well (oldest if multiple)
+ \ENDIF
+ \STATE Determine the next state of the well
+ \ENDFOR
+ \FOR{all wells}
+ \STATE Update the well's current state and adjust it's properties
+ \STATE calculate the profit
+ \STATE calculate N.ture
+ \IF{N.true<=0}
+ \STATE flag the well for abandoning 
+ \ENDIF
+ \IF{any well is in wait for rig state}
+ \STATE determine possible workover wells and select only one based on assumptions
+ \ENDIF
+ \ENDFOR
+ \STATE time=time+1
+ \ENDWHILE
+ \end{algorithmic}
+ \end{algorithm}
+%-------
+Three additional properties (\texttt{current.state, next.state, drilling.flag}) are added to the course notes proposed well objects in order to track them more easily. All wells are in Queue at the begining \textit(time zero). 
+<<tidy=FALSE,eval=FALSE>>=
+#Initializing well objects
+wells <- vector("list",N.wells)
+for (i in 1:N.wells){
+  wells[[i]] = list(current.state="Queue",next.state="Queue",
+                    t.states=matrix(0,10000,N.states),
+                    t.drill=sample(2:6,1,p=c(0,0.25,0.5,0.75,1)),
+                    t.this=0,N.believe=runif(1,500,1000),
+                    N.true=runif(1,500,1000),q=runif(1,0.5,3),value=0,
+                    drilling.flag=FALSE)
+  
+  colnames(wells[[i]]$t.states) <- states
+}
+@
+Initialize the transition matrix so that all the pathes between states are open at the begining. 
+<<tidy=FALSE,eval=FALSE>>=
+#Defining initial transition matrix 
+trans.prob = matrix(0,nrow=N.states,ncol=N.states,
+                    dimnames=list(states,states))
+trans.prob = initialize(trans.prob) #initializing transition matrix
+@
+\texttt{Drilling.flag} shows which well is being drilled. \texttt{wells.abandoned} records the wells that are absorbed. 
+<<tidy=FALSE,eval=FALSE>>=
+#Initiallizing variables
+drilling.flag      = rep(FALSE,N.wells)
+wells.abandoned    = rep(FALSE,N.wells)
+pos.workover.wells = rep(FALSE,N.wells)
+def.N.true.wells   = rep(FALSE,N.wells)
+waiting.time       = rep(0,N.wells)
+workover.well      = 0
+time               = 0
+@
+It is not necessary, but would be more understandable and sometimes useful, if we calculate the costs and some other paramters in a separate \texttt{for} loop. (i.e. after all wells are moved one step and before the end of the month). 
+<<tidy=FALSE,eval=FALSE>>=
+#Main loop 
+while (!all(wells.abandoned)){
+   #First for loop
+   for (i in 1:N.wells){
+     #move wells one time step
+     ...
+   }
+   #Second for loop
+   for (i in 1:N.wells){
+     #for calculating the costs 
+     ...
+   }   
+  ...
+  wells.abandoned[[i]] = (wells[[i]]$current.state=="Abandon")
+  time=time+1 
+}
+@
+The next state is sampled between all posible pathes weighted by their probabilities.
+<<tidy=FALSE,eval=FALSE>>=
+    #select the next state.
+    pos.next.states <- names(which(  trans.prob[current.state,]!=0 )) 
+    prob.next.states  <- trans.prob[current.state,pos.next.states]
+    selected.next.state <- sample(pos.next.states,1,p=prob.next.states)
+    wells[[i]]$next.state <- selected.next.state
+@
+Below chunck demonstrates how workover wells are selected. 
+<<tidy=FALSE,eval=FALSE>>=
+  #In the second "for" loop
+    pos.workover.wells[i]=(wells[[i]]$current.state=="WaitForRig")
+    waiting.time[i] = as.integer(pos.workover.wells[i])
+                      *wells[[i]]$t.this
+
+  #Before increasing time step, check for workover wells
+  if (any(pos.workover.wells))
+  {
+    #First check which wells have arrived at WaitForRig state
+    max.waiting.wells = which(waiting.time==
+                              max(waiting.time[pos.workover.wells]))
+    
+    #If more than one well arrive at the same time, choose the well
+    # has started the chain sooner(Oldest well)
+    workover.well     = min(max.waiting.wells)  
+  }else{
+    workover.well     = 0
+  }
+@
+Below chunck is located at the begining of the first \texttt{for} loop to check whether the drilling state is empty. 
+
+<<tidy=FALSE,eval=FALSE>>=
+    #check if any well is being drilled. If not, the next well can be
+    #drilled. 
+    for (j in 1:N.wells)
+       drilling.flag[j] =wells[[j]]$drilling.flag   
+    if (any(drilling.flag))
+        trans.prob <- drill.close(trans.prob) else
+        trans.prob <- drill.open(trans.prob)
+@
+The below code is added for abandoning depleted wells. 
+<<tidy=FALSE,eval=FALSE>>=
+     #If N.true of the well is depleted, abandon that well. 
+     def.N.true.wells[i] = (wells[[i]]$N.true <= 0)
+     if (def.N.true.wells[i])
+        trans.prob <- well.abandon(trans.prob)  else 
+        trans.prob <- well.open(trans.prob)
+@
+Below code is for moving the well out of the drilling state into the finished drilling state if it's \texttt{t.drill} is fulfilled.
+<<tidy=FALSE,eval=FALSE>>=
+     #If drilling is finished move the well out. 
+     if (sum(wells[[i]]$t.states[,"Drill"])==wells[[i]]$t.drill)
+        trans.prob <- Finished.drill.open(trans.prob) else
+        trans.prob <- Finished.drill.close(trans.prob)
+
+@
+Below chunck should be clear. 
+<<tidy=FALSE,eval=FALSE>>=
+     #WorkOver is only open for one well at time
+     if (i==workover.well)
+        trans.prob <- WorkOver.open(trans.prob) else 
+        trans.prob <- WorkOver.close(trans.prob)
+@
+And finally the costs are calculated in the second \texttt{for} loop.
+<<tidy=FALSE,eval=FALSE>>=
+    #calculate the profit and modify the value of the well
+    profit=as.integer(wells[[i]]$current.state=="Produce")*wells[[i]]$q
+    if (!(wells[[i]]$current.state=="Abandon"))
+      wells[[i]]$value = (wells[[i]]$value+
+                          costs[[wells[[i]]$current.state]]+profit)
+    #The cost of Abandon state is single time cost. 
+    if ((wells[[i]]$current.state=="Abandon")&&(wells[[i]]$t.this==1))
+      wells[[i]]$value = (wells[[i]]$value+
+                          costs[[wells[[i]]$current.state]]+profit)
+@
+
+Log of the wells for a prolific field development (revenue of around $2100$ million \$ after all wells are abandoned) are shown below. As violen plot indicates this is one of the profitable develpments. The average revenue (after 1000 months) is around 600 million \$. 
+
+%\begin{figure}[htbp]
+%\begin{center}
+%\includepdf[pages={1}]{simulationPlot.pdf}
+\includepdf[pages={1,2,3}]{simulationPlot.pdf}
+\pagebreak
+%\caption{}
+% \label{simPlot}
+%\end{center}
+%\end{figure}
+
+
+\begin{figure}[htbp]
+\begin{center}
+\includegraphics[width=\linewidth]{vioplot.pdf}
+\caption{Violin plot for the field develpment. The red line connects the mean of field net revenue calculated after each month. It turns out that the mean is equal to the median. The skewness of the kernell densities for all months are small and upward. It is more likely that we have to wait around 300 months to get our investment money back. If we are the most luckiest person on earth, this waiting time would decrease to 180 months and 3800 million \$ is the maximum revenue we will attain. The most probable maximum cost would be around 1500 million and it happens after around 70 months. The maximum amount that we have to invest on field development does not depend (relatively) on whether we are lucky or not. After a $1000$ month!($83$ years), the $0.25$ percent quantile of violins are roughly higher than zero which can be promising if we are interested in long term revenue. 
+}
+\label{simPlot}
+\end{center}
+\end{figure}
+
+
+%\includepdf[pages={1},width=1\linewidth]{vioplot.pdf}
+
+\end{document}
